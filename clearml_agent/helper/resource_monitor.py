@@ -156,14 +156,17 @@ class ResourceMonitor(object):
         self._exit_event.set()
         self.send_report()
 
-    def send_report(self, stats=None):
+    def send_report(self, stats=None, report=None):
+        if not report:
+            report = self.get_report().to_dict()
+
         report = dict(
             machine_stats=stats,
             timestamp=(int(time()) * 1000),
             worker=self._worker_id,
             tags=self._worker_tags,
             is_daemon=self._report_daemon,
-            **self.get_report().to_dict()
+            **report
         )
         log.debug("sending report: %s", report)
 
@@ -333,13 +336,17 @@ class ResourceMonitor(object):
                     for key, value in average_readouts.items()
                 }
 
+                report = self.get_report().to_dict()
+
+                print(f"report: {report}")
+
                 # send actual report
-                if self.send_report(stats):
+                if self.send_report(stats, report):
                     # clear readouts if this is update was sent
                     self._clear_readouts()
 
                 # report /kd-cache disk free space via events API
-                self._report_kd_cache_disk(seconds_since_started)
+                self._report_kd_cache_disk(report.get("task"), seconds_since_started)
 
                 # count reported iterations
                 reported += 1
@@ -505,17 +512,19 @@ class ResourceMonitor(object):
             )
             self._gpustat = None
 
-    def _report_kd_cache_disk(self, iter):
+    def _report_kd_cache_disk(self, task_id, iter):
         """
         Report /kd-cache disk free space via events API if the mount exists.
         """
-        report = self.get_report()
-        task_id = report.task if report else None
+        # Get current task from StatusReport - this is thread-safe and always reflects
+        # the worker's current task state, which is appropriate for shared resources
+        print(f"task_id: {task_id}")
         if not task_id:
             return
 
         kd_cache_path = "/kd-cache"
         try:
+            print(f"kd_cache_path: {kd_cache_path}")
             if not os.path.exists(kd_cache_path):
                 return
 
@@ -531,6 +540,8 @@ class ResourceMonitor(object):
                 "iter": iter,
                 "timestamp": int(time() * 1000),
             }
+
+            print(f"event: {event}")
 
             try:
                 events_service = Events(self.session.config)
